@@ -78,6 +78,32 @@ def find_pass_plugin():
     sys.exit(1)
 
 
+def find_macos_llvm_bin_dir():
+    explicit_prefix = os.environ.get("LLVM_PREFIX")
+    if explicit_prefix:
+        return Path(explicit_prefix) / "bin"
+
+    explicit_bin = os.environ.get("LLVM_BIN_DIR")
+    if explicit_bin:
+        return Path(explicit_bin)
+
+    for formula in ("llvm@20", "llvm"):
+        try:
+            result = subprocess.run(
+                ["brew", "--prefix", formula],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            llvm_bin_dir = Path(result.stdout.strip()) / "bin"
+            if llvm_bin_dir.exists():
+                return llvm_bin_dir
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+
+    return None
+
+
 def run_command(cmd_args, log_file=None, env=None):
     try:
         cmd_args_str = [str(arg) for arg in cmd_args]
@@ -110,9 +136,8 @@ def run_command(cmd_args, log_file=None, env=None):
 def run_test(test_file, pipeline_name, pass_plugin_path, compiler, opt, env):
     test_name = test_file.stem
     print(
-        f"{Colors.YELLOW}--- Testing: {test_name} (Pipeline: {pipeline_name}) ---{
-            Colors.NC
-        }"
+        f"{Colors.YELLOW}--- Testing: {test_name} "
+        f"(Pipeline: {pipeline_name}) ---{Colors.NC}"
     )
 
     exe_suffix = ".exe" if platform.system() == "Windows" else ""
@@ -227,25 +252,17 @@ def main():
         os.environ["PATH"] = os.pathsep.join(linux_paths)
 
     if platform.system() == "Darwin":
-        try:
-            result = subprocess.run(
-                ["brew", "--prefix", "llvm"], capture_output=True, text=True, check=True
-            )
-            llvm_bin_dir = Path(result.stdout.strip()) / "bin"
-            if llvm_bin_dir.exists():
-                print(
-                    f"{Colors.CYAN}macOS detected. Prepending Homebrew LLVM to PATH: {
-                        llvm_bin_dir
-                    }{Colors.NC}"
-                )
-                os.environ["PATH"] = str(llvm_bin_dir) + os.pathsep + os.environ["PATH"]
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        llvm_bin_dir = find_macos_llvm_bin_dir()
+        if llvm_bin_dir and llvm_bin_dir.exists():
             print(
-                f"{
-                    Colors.YELLOW
-                }Warning: Could not find Homebrew LLVM. Assuming tools are in PATH.{
-                    Colors.NC
-                }"
+                f"{Colors.CYAN}macOS detected. Prepending Homebrew LLVM "
+                f"to PATH: {llvm_bin_dir}{Colors.NC}"
+            )
+            os.environ["PATH"] = str(llvm_bin_dir) + os.pathsep + os.environ["PATH"]
+        else:
+            print(
+                f"{Colors.YELLOW}Warning: Could not find Homebrew LLVM. "
+                f"Assuming tools are in PATH.{Colors.NC}"
             )
 
     clang = find_exec(
@@ -265,18 +282,16 @@ def main():
     system = platform.system()
     if system == "Windows":
         print(
-            f"{Colors.CYAN}Windows detected. Adding '{
-                llvm_bin_dir
-            }' to PATH for subprocesses.{Colors.NC}"
+            f"{Colors.CYAN}Windows detected. Adding '{llvm_bin_dir}' "
+            f"to PATH for subprocesses.{Colors.NC}"
         )
         env["PATH"] = str(llvm_bin_dir) + os.pathsep + env.get("PATH", "")
     elif system == "Darwin":
         llvm_lib_dir = llvm_bin_dir.parent / "lib"
         if llvm_lib_dir.exists():
             print(
-                f"{Colors.CYAN}macOS detected. Setting DYLD_LIBRARY_PATH to '{
-                    llvm_lib_dir
-                }'.{Colors.NC}"
+                f"{Colors.CYAN}macOS detected. Setting DYLD_LIBRARY_PATH "
+                f"to '{llvm_lib_dir}'.{Colors.NC}"
             )
             env["DYLD_LIBRARY_PATH"] = (
                 str(llvm_lib_dir) + os.pathsep + env.get("DYLD_LIBRARY_PATH", "")
